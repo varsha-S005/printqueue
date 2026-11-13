@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PrintQueue - Campus Printing</title>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #f3f6fb;
+    color: #17243a;
+}
+
+header {
+    background: #17365d;
+    color: white;
+    padding: 22px 7%;
+}
+
+header h1 { margin: 0 0 5px; }
+header p { margin: 0; opacity: .9; }
+
+main {
+    width: min(1050px, 92%);
+    margin: 24px auto;
+}
+
+.panel {
+    background: white;
+    padding: 20px;
+    margin-bottom: 18px;
+    border-radius: 12px;
+    box-shadow: 0 3px 14px #1b355515;
+}
+
+h2 {
+    margin-top: 0;
+    color: #17365d;
+}
+
+form {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+}
+
+label {
+    font-size: 14px;
+    font-weight: bold;
+}
+
+input {
+    display: block;
+    width: 100%;
+    padding: 11px;
+    margin-top: 6px;
+    border: 1px solid #cbd5e1;
+    border-radius: 7px;
+}
+
+input[type="file"] {
+    background: #f8fafc;
+}
+
+button {
+    border: 0;
+    padding: 10px 14px;
+    border-radius: 7px;
+    background: #245b91;
+    color: white;
+    cursor: pointer;
+}
+
+button:disabled {
+    background: #9aa8b8;
+    cursor: not-allowed;
+}
+
+.submit {
+    grid-column: 1 / -1;
+    padding: 13px;
+    font-weight: bold;
+}
+
+.message {
+    margin-top: 10px;
+    font-weight: bold;
+}
+
+.small {
+    color: #637286;
+    font-size: 13px;
+}
+
+.upload-info {
+    grid-column: 1 / -1;
+    background: #edf5ff;
+    border: 1px dashed #8baed3;
+    border-radius: 8px;
+    padding: 13px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+th, td {
+    padding: 11px 8px;
+    text-align: left;
+    border-bottom: 1px solid #e3e9f0;
+}
+
+th { background: #edf3f9; }
+
+.status { font-weight: bold; }
+.waiting { color: #9a6700; }
+.printing { color: #1767a5; }
+.completed { color: #17804a; }
+
+.actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.actions button {
+    padding: 7px 9px;
+    font-size: 12px;
+}
+
+.download {
+    background: #17804a;
+}
+
+.table-wrap { overflow-x: auto; }
+
+@media (max-width: 650px) {
+    form { grid-template-columns: 1fr; }
+    .submit, .upload-info { grid-column: auto; }
+    table { min-width: 760px; }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+    <h1>PrintQueue</h1>
+    <p>Campus Xerox Centre - submit a request and track your token</p>
+</header>
+
+<main>
+
+<section class="panel">
+    <h2>Student: Submit a print request</h2>
+
+    <form id="jobForm">
+
+        <label>Your name
+            <input
+                id="studentName"
+                maxlength="60"
+                required
+                placeholder="Enter your name">
+        </label>
+
+        <label>Document name
+            <input
+                id="documentName"
+                maxlength="100"
+                required
+                placeholder="e.g. DSA_Assignment.pdf">
+        </label>
+
+        <label>Number of pages
+            <input
+                id="pages"
+                type="number"
+                min="1"
+                max="500"
+                value="2"
+                required>
+        </label>
+
+        <label>Number of copies
+            <input
+                id="copies"
+                type="number"
+                min="1"
+                max="20"
+                value="1"
+                required>
+        </label>
+
+        <div class="upload-info">
+            <label for="pdfFile">Upload your PDF document</label>
+
+            <input
+                id="pdfFile"
+                type="file"
+                accept=".pdf,application/pdf"
+                required>
+
+            <p class="small">
+                PDF only. Maximum file size: 10 MB.
+            </p>
+
+            <p id="fileInfo" class="small"></p>
+        </div>
+
+        <button class="submit" id="submitButton" type="submit">
+            Upload PDF & Submit Request
+        </button>
+
+    </form>
+
+    <div id="message" class="message" aria-live="polite"></div>
+</section>
+
+<section class="panel">
+
+    <h2>Live queue and job status</h2>
+
+    <p class="small">
+        Queue order is FIFO: the first waiting request is served first.
+    </p>
+
+    <button onclick="loadJobs()">Refresh queue</button>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Token</th>
+                    <th>Student</th>
+                    <th>Document</th>
+                    <th>Pages × Copies</th>
+                    <th>Queue position</th>
+                    <th>Status</th>
+                    <th>Operator actions</th>
+                </tr>
+            </thead>
+
+            <tbody id="jobsBody">
+                <tr>
+                    <td colspan="7">Loading requests...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+</section>
+
+<p class="small">
+    Demo only. Do not upload private or sensitive documents.
+</p>
+
+</main>
+
+<script>
+const API = "/api/jobs";
+
+const form = document.getElementById("jobForm");
+const message = document.getElementById("message");
+const pdfFile = document.getElementById("pdfFile");
+const fileInfo = document.getElementById("fileInfo");
+const submitButton = document.getElementById("submitButton");
+
+// Display selected PDF information
+pdfFile.addEventListener("change", () => {
+
+    const file = pdfFile.files[0];
+
+    fileInfo.textContent = "";
+
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+        fileInfo.textContent = "Please select a PDF file.";
+        pdfFile.value = "";
+        return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+        fileInfo.textContent = "File exceeds the 10 MB limit.";
+        pdfFile.value = "";
+        return;
+    }
+
+    fileInfo.textContent =
+        "Selected: " + file.name +
+        " (" + (file.size / 1024 / 1024).toFixed(2) + " MB)";
+
+    if (!document.getElementById("documentName").value.trim()) {
+        document.getElementById("documentName").value = file.name;
+    }
+});
+
+// Submit PDF and print request
+form.addEventListener("submit", async (event) => {
+
+    event.preventDefault();
+
+    const file = pdfFile.files[0];
+
+    if (!file) {
+        message.textContent = "Please select a PDF file.";
+        return;
+    }
+
+    if (!file.name.toLowerCase().endsWith(".pdf") ||
+        file.size > 10 * 1024 * 1024) {
+        message.textContent = "Please select a valid PDF under 10 MB.";
+        return;
+    }
+
+    const data = new FormData();
+
+    data.append(
+        "studentName",
+        document.getElementById("studentName").value.trim()
+    );
+
+    data.append(
+        "documentName",
+        document.getElementById("documentName").value.trim()
+    );
+
+    data.append(
+        "pages",
+        document.getElementById("pages").value
+    );
+
+    data.append(
+        "copies",
+        document.getElementById("copies").value
+    );
+
+    data.append("file", file);
+
+    try {
+
+        submitButton.disabled = true;
+        submitButton.textContent = "Uploading PDF...";
+        message.textContent = "Please wait while your PDF is uploaded.";
+
+        const response = await fetch(API + "/upload", {
+            method: "POST",
+            body: data
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.message || "Could not submit request");
+        }
+
+        const saved = await response.json();
+
+        message.textContent =
+            "PDF uploaded successfully! Your token is #" + saved.id;
+
+        form.reset();
+        fileInfo.textContent = "";
+
+        document.getElementById("pages").value = 2;
+        document.getElementById("copies").value = 1;
+
+        await loadJobs();
+
+    } catch (error) {
+
+        message.textContent = error.message;
+
+    } finally {
+
+        submitButton.disabled = false;
+        submitButton.textContent = "Upload PDF & Submit Request";
+    }
+});
+
+// Load print queue
+async function loadJobs() {
+
+    const body = document.getElementById("jobsBody");
+
+    try {
+
+        const response = await fetch(API);
+
+        if (!response.ok) {
+            throw new Error("Could not load queue");
+        }
+
+        const jobs = await response.json();
+
+        const waiting = jobs.filter(
+            job => job.status === "WAITING"
+        );
+
+        body.innerHTML = "";
+
+        if (jobs.length === 0) {
+            body.innerHTML =
+                '<tr><td colspan="7">No print requests yet.</td></tr>';
+            return;
+        }
+
+        jobs.forEach(job => {
+
+            const position = job.status === "WAITING"
+                ? waiting.findIndex(item => item.id === job.id) + 1
+                : "-";
+
+            const row = document.createElement("tr");
+
+            const values = [
+                "#" + job.id,
+                job.studentName,
+                job.documentName,
+                job.pages + " × " + job.copies,
+                position,
+                job.status
+            ];
+
+            values.forEach((value, index) => {
+
+                const cell = document.createElement("td");
+                cell.textContent = value;
+
+                if (index === 5) {
+                    cell.className =
+                        "status " + job.status.toLowerCase();
+                }
+
+                row.appendChild(cell);
+            });
+
+            const actionCell = document.createElement("td");
+            actionCell.className = "actions";
+
+            // Download button for uploaded PDFs
+            if (job.storedFileName) {
+
+                const download = document.createElement("button");
+
+                download.textContent = "Download PDF";
+                download.className = "download";
+
+                download.onclick = () => {
+                    window.location.href =
+                        API + "/" + job.id + "/file";
+                };
+
+                actionCell.appendChild(download);
+            }
+
+            if (job.status === "WAITING") {
+
+                const start = document.createElement("button");
+
+                start.textContent = "Start";
+                start.onclick = () => updateJob(job.id, "start");
+
+                actionCell.appendChild(start);
+
+            } else if (job.status === "PRINTING") {
+
+                const done = document.createElement("button");
+
+                done.textContent = "Complete";
+                done.onclick = () => updateJob(job.id, "complete");
+
+                actionCell.appendChild(done);
+            }
+
+            if (actionCell.children.length === 0) {
+                actionCell.textContent = "—";
+            }
+
+            row.appendChild(actionCell);
+            body.appendChild(row);
+        });
+
+    } catch (error) {
+
+        body.innerHTML =
+            '<tr><td colspan="7">Unable to connect. Is the Java server running?</td></tr>';
+    }
+}
+
+// Start or complete a print job
+async function updateJob(id, action) {
+
+    try {
+
+        const response = await fetch(
+            API + "/" + id + "/" + action,
+            { method: "PUT" }
+        );
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.message || "Action failed");
+        }
+
+        message.textContent = "Token #" + id + " updated.";
+
+        await loadJobs();
+
+    } catch (error) {
+
+        message.textContent = error.message;
+    }
+}
+
+loadJobs();
+</script>
+
+</body>
+</html>
