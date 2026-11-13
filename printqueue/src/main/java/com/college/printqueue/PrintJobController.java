@@ -55,7 +55,7 @@ public class PrintJobController {
         return repository.save(job);
     }
 
-    // New PDF upload endpoint
+    // PDF upload endpoint
     @PostMapping(
         value = "/upload",
         consumes = MediaType.MULTIPART_FORM_DATA_VALUE
@@ -227,6 +227,37 @@ public class PrintJobController {
 
         job.setStatus("COMPLETED");
         return repository.save(job);
+    }
+
+    // NEW: remove a job (and its PDF file) from the queue
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteJob(@PathVariable Long id) {
+
+        PrintJob job = getJobOrThrow(id);
+
+        if ("PRINTING".equals(job.getStatus())) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Cannot remove a job that is printing");
+        }
+
+        // Delete the stored PDF file, if there is one
+        if (job.getStoredFileName() != null) {
+            try {
+                Path directory = Paths.get(uploadDir)
+                        .toAbsolutePath().normalize();
+                Path filePath = directory
+                        .resolve(job.getStoredFileName()).normalize();
+                if (filePath.startsWith(directory)) {
+                    Files.deleteIfExists(filePath);
+                }
+            } catch (IOException ex) {
+                // Ignore: the job is still removed from the queue
+            }
+        }
+
+        repository.delete(job);
     }
 
     private void validateJob(

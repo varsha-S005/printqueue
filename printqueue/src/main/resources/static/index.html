@@ -138,6 +138,10 @@ th { background: #edf3f9; }
     background: #17804a;
 }
 
+.remove {
+    background: #b3261e;
+}
+
 .table-wrap { overflow-x: auto; }
 
 @media (max-width: 650px) {
@@ -215,7 +219,7 @@ th { background: #edf3f9; }
         </div>
 
         <button class="submit" id="submitButton" type="submit">
-            Upload PDF & Submit Request
+            Upload PDF &amp; Submit Request
         </button>
 
     </form>
@@ -229,6 +233,7 @@ th { background: #edf3f9; }
 
     <p class="small">
         Queue order is FIFO: the first waiting request is served first.
+        The list refreshes automatically. Completed jobs are removed after 10 seconds.
     </p>
 
     <button onclick="loadJobs()">Refresh queue</button>
@@ -271,6 +276,9 @@ const message = document.getElementById("message");
 const pdfFile = document.getElementById("pdfFile");
 const fileInfo = document.getElementById("fileInfo");
 const submitButton = document.getElementById("submitButton");
+
+// Job ids already scheduled for automatic removal
+const scheduledRemoval = new Set();
 
 // Display selected PDF information
 pdfFile.addEventListener("change", () => {
@@ -362,16 +370,17 @@ form.addEventListener("submit", async (event) => {
 
         const saved = await response.json();
 
-        message.textContent =
-            "PDF uploaded successfully! Your token is #" + saved.id;
-
         form.reset();
         fileInfo.textContent = "";
 
         document.getElementById("pages").value = 2;
         document.getElementById("copies").value = 1;
 
-        await loadJobs();
+        const jobs = await loadJobs();
+        const number = jobs.findIndex(j => j.id === saved.id) + 1;
+
+        message.textContent =
+            "PDF uploaded successfully! Your token is #" + number;
 
     } catch (error) {
 
@@ -383,6 +392,17 @@ form.addEventListener("submit", async (event) => {
         submitButton.textContent = "Upload PDF & Submit Request";
     }
 });
+
+// Remove a job from the queue (also deletes its PDF on the server)
+async function removeJob(id) {
+    try {
+        await fetch(API + "/" + id, { method: "DELETE" });
+    } catch (error) {
+        // ignore: the next refresh will show the real state
+    }
+    scheduledRemoval.delete(id);
+    loadJobs();
+}
 
 // Load print queue
 async function loadJobs() {
@@ -408,10 +428,17 @@ async function loadJobs() {
         if (jobs.length === 0) {
             body.innerHTML =
                 '<tr><td colspan="7">No print requests yet.</td></tr>';
-            return;
+            return jobs;
         }
 
-        jobs.forEach(job => {
+        jobs.forEach((job, i) => {
+
+            // Remove completed jobs 10 seconds after they are seen
+            if (job.status === "COMPLETED" &&
+                !scheduledRemoval.has(job.id)) {
+                scheduledRemoval.add(job.id);
+                setTimeout(() => removeJob(job.id), 10000);
+            }
 
             const position = job.status === "WAITING"
                 ? waiting.findIndex(item => item.id === job.id) + 1
@@ -420,7 +447,7 @@ async function loadJobs() {
             const row = document.createElement("tr");
 
             const values = [
-                "#" + job.id,
+                "#" + (i + 1),
                 job.studentName,
                 job.documentName,
                 job.pages + " × " + job.copies,
@@ -469,6 +496,18 @@ async function loadJobs() {
 
                 actionCell.appendChild(start);
 
+                const remove = document.createElement("button");
+
+                remove.textContent = "Remove";
+                remove.className = "remove";
+                remove.onclick = () => {
+                    if (confirm("Remove this request?")) {
+                        removeJob(job.id);
+                    }
+                };
+
+                actionCell.appendChild(remove);
+
             } else if (job.status === "PRINTING") {
 
                 const done = document.createElement("button");
@@ -487,10 +526,13 @@ async function loadJobs() {
             body.appendChild(row);
         });
 
+        return jobs;
+
     } catch (error) {
 
         body.innerHTML =
             '<tr><td colspan="7">Unable to connect. Is the Java server running?</td></tr>';
+        return [];
     }
 }
 
@@ -509,7 +551,7 @@ async function updateJob(id, action) {
             throw new Error(error.message || "Action failed");
         }
 
-        message.textContent = "Token #" + id + " updated.";
+        message.textContent = "Job updated.";
 
         await loadJobs();
 
@@ -520,6 +562,7 @@ async function updateJob(id, action) {
 }
 
 loadJobs();
+setInterval(loadJobs, 5000);
 </script>
 
 </body>
